@@ -1,0 +1,8 @@
+---
+app_image: "ghcr.io/mist1qu3x/devops-ci-app"
+app_tag: "6cb25027b38e6da3e15acac762a1ca6c2a5f9d49"
+app_container_name: "devops-ci-app"
+app_host_port: 5000
+app_internal_port: 5000
+# Образ из ПР № 10 собран для linux/amd64, VM работает на arm64 (Apple Silicon)
+app_platform: "linux/amd64"
