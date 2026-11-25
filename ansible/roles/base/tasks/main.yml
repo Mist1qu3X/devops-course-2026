@@ -1,0 +1,87 @@
+---
+- name: Assert supported VM platform
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == "Ubuntu"
+      - ansible_distribution_version is version("24.04", ">=")
+      - ansible_architecture in ["x86_64", "aarch64"]
+    fail_msg: "Требуется Ubuntu Server 24.04 или новее (amd64 либо arm64)"
+
+# Стенд: VM в VirtualBox на macOS, на хосте работает VPN, через который из NAT
+# проходит TCP, но не UDP. Обычный DNS (UDP 53) не работает, поэтому резолвер
+# переводится на DNS over TLS (TCP 853) до первой установки пакетов.
+- name: Create resolved drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Resolve DNS over TLS (UDP from VirtualBox NAT is blocked by host VPN)
+  ansible.builtin.copy:
+    dest: /etc/systemd/resolved.conf.d/10-dns-over-tls.conf
+    content: |
+      [Resolve]
+      DNS=1.1.1.1#cloudflare-dns.com 9.9.9.9#dns.quad9.net
+      DNSOverTLS=yes
+      Domains=~.
+    owner: root
+    group: root
+    mode: "0644"
+  register: resolved_conf
+
+- name: Apply resolver configuration before package installation
+  ansible.builtin.service:
+    name: systemd-resolved
+    state: restarted
+  when: resolved_conf.changed
+
+- name: Install base packages and remote module dependencies
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - openssh-server
+      - ufw
+      - python3-debian
+      - python3-requests
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Стенд: образ из ПР № 10 собран для linux/amd64, а VM работает на arm64.
+- name: Install amd64 user-mode emulation on arm64 hosts
+  ansible.builtin.apt:
+    name: qemu-user-binfmt
+    state: present
+  when: ansible_architecture == "aarch64"
+
+- name: Add Docker official repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: https://download.docker.com/linux/ubuntu
+    suites: "{{ ansible_distribution_release }}"
+    components: [stable]
+    architectures: ["{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"]
+    signed_by: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+
+- name: Install Docker Engine
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Enable Docker service
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
